@@ -39,8 +39,35 @@ The Iris AI Chatbot is a conversational AI application that leverages Anthropic'
 ---
 
 ## Project Structure
-
-project/ ├── lambda_functions/ │ ├── chatbot_function/ │ ├── email_function/ │ └── layers/ ├── database/ ├── front_end/ ├── config/ ├── tests/ └── README.md
+project/
+├── lambda_functions/
+│   ├── chatbot_function/
+│   │   ├── lambda_function.py
+│   │   ├── requirements.txt
+│   │   ├── test_chatbot.py
+│   │   └── unit_tests.py
+│   ├── email_function/
+│   │   ├── lambda_function.py
+│   │   ├── requirements.txt
+│   │   ├── test_email.py
+│   │   └── unit_tests.py
+│   └── layers/
+│       └── python/
+│           └── (dependencies)
+├── database/
+│   ├── init_db.sql
+│   └── daily_update.py
+├── front_end/
+│   ├── index.html
+│   ├── app.js
+│   ├── styles.css
+├── config/
+│   ├── dev_config.py
+│   └── prod_config.py
+├── tests/
+│   ├── test_chatbot_function.py
+│   └── test_email_function.py
+└── README.md
 
 
 - **lambda_functions/**: Contains AWS Lambda functions for the chatbot and email functionalities.
