@@ -1,0 +1,167 @@
+import os
+import json
+import boto3
+import psycopg2
+import requests
+import logging
+from datetime import datetime
+from botocore.exceptions import ClientError
+
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Load configuration based on environment
+try:
+    ENV = os.environ.get('ENV', 'dev')
+    if ENV == 'prod':
+        from config.prod_config import (
+            DB_HOST, DB_NAME, DB_USER, DB_PASSWORD,
+            S3_BUCKET_NAME, IAM_ROLE_ARN, SNS_TOPIC_ARN
+        )
+    else:
+        from config.dev_config import (
+            DB_HOST, DB_NAME, DB_USER, DB_PASSWORD,
+            S3_BUCKET_NAME, IAM_ROLE_ARN, SNS_TOPIC_ARN
+        )
+except ImportError as e:
+    logger.error(f"Configuration import error: {e}")
+    raise
+
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
+ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/complete'
+
+# Reusable error response function
+def create_error_response(status_code, message):
+    return {
+        'statusCode': status_code,
+        'body': json.dumps({'error': message})
+    }
+
+# Function to get response from Anthropic's Claude API
+def get_claude_response(prompt):
+    try:
+        headers = {
+            'x-api-key': ANTHROPIC_API_KEY,
+            'Content-Type': 'application/json'
+        }
+        data = {
+            'prompt': prompt,
+            'model': 'claude-3',
+            'max_tokens_to_sample': 300,
+            'stop_sequences': ['\n\nHuman:'],
+            'temperature': 0.7,
+        }
+        response = requests.post(ANTHROPIC_API_URL, headers=headers, json=data)
+        response.raise_for_status()
+        result = response.json()
+        return result.get('completion', '')
+    except requests.exceptions.HTTPError as http_err:
+        logger.error(f"HTTP error occurred: {http_err}")
+        raise
+    except Exception as e:
+        logger.error(f"Error getting response from Claude API: {e}")
+        raise
+
+# Lambda handler function
+def lambda_handler(event, context):
+    try:
+        # Extracting event data
+        user_input = event.get('user_input', '').strip()
+        user_id = event.get('user_id', 'anonymous').strip()
+        user_email = event.get('user_email', '').strip()
+        feedback_rating = event.get('feedback_rating', None)
+        feedback_comment = event.get('feedback_comment', '').strip()
+
+        if not user_input:
+            logger.warning("User input is missing.")
+            return create_error_response(400, "user_input is required")
+
+        # Connect to PostgreSQL
+        try:
+            conn = psycopg2.connect(
+                host=DB_HOST,
+                database=DB_NAME,
+                user=DB_USER,
+                password=DB_PASSWORD
+            )
+            cursor = conn.cursor()
+        except psycopg2.Error as db_err:
+            logger.error(f"Database connection error: {db_err}")
+            return create_error_response(500, "Database connection error")
+
+        # Retrieve prompts and references
+        try:
+            cursor.execute("SELECT prompt_text, reference FROM prompts")
+            prompts = cursor.fetchall()
+            combined_prompts = '\n'.join([p[0] for p in prompts])
+        except Exception as e:
+            logger.error(f"Error fetching prompts: {e}")
+            return create_error_response(500, "Error fetching prompts")
+
+        # Generate response using Claude
+        full_prompt = f"{combined_prompts}\n\nHuman: {user_input}\n\nAssistant:"
+        try:
+            response_text = get_claude_response(full_prompt)
+        except Exception as e:
+            logger.error(f"Error generating response: {e}")
+            return create_error_response(500, "Error generating response from AI model")
+
+        # Save user interaction
+        try:
+            cursor.execute(
+                "INSERT INTO user_interactions (user_id, user_input, bot_response) VALUES (%s, %s, %s) RETURNING id",
+                (user_id, user_input, response_text)
+            )
+            interaction_id = cursor.fetchone()[0]
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Error saving interaction: {e}")
+            return create_error_response(500, "Error saving interaction")
+
+        # Save user feedback if provided
+        if feedback_rating is not None:
+            try:
+                cursor.execute(
+                    "INSERT INTO user_feedback (user_id, interaction_id, rating, comment) VALUES (%s, %s, %s, %s)",
+                    (user_id, interaction_id, feedback_rating, feedback_comment)
+                )
+                conn.commit()
+            except Exception as e:
+                logger.error(f"Error saving feedback: {e}")
+                return create_error_response(500, "Error saving feedback")
+
+        # Close the database connection
+        cursor.close()
+        conn.close()
+
+        # If user_email is provided, send a notification via SNS
+        if user_email:
+            try:
+                sns_client = boto3.client('sns')
+                sns_message = f"Hello,\n\nYour interaction with Iris AI Chatbot is complete. Here is the response:\n\n{response_text}"
+                sns_subject = "Your Iris AI Chatbot Response"
+                sns_client.publish(
+                    TopicArn=SNS_TOPIC_ARN,
+                    Message=sns_message,
+                    Subject=sns_subject,
+                    MessageAttributes={
+                        'Recipient': {
+                            'DataType': 'String',
+                            'StringValue': user_email
+                        }
+                    }
+                )
+            except ClientError as e:
+                logger.error(f"Error sending email via SNS: {e}")
+                return create_error_response(500, "Error sending email notification")
+
+        # Return the response
+        return {
+            'statusCode': 200,
+            'body': json.dumps({'response': response_text})
+        }
+
+    except Exception as e:
+        logger.error(f"Unhandled exception: {e}")
+        return create_error_response(500, "Internal server error")

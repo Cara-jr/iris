@@ -1,0 +1,76 @@
+import os
+import smtplib
+from email.mime.text import MIMEText
+import logging
+import json
+import boto3
+from botocore.exceptions import ClientError
+
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# SMTP configuration
+SMTP_SERVER = os.environ.get('SMTP_SERVER')
+SMTP_PORT = int(os.environ.get('SMTP_PORT', 587))
+SMTP_USERNAME = os.environ.get('SMTP_USERNAME')
+SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD')
+
+# Reusable error response function
+def create_error_response(status_code, message):
+    return {
+        'statusCode': status_code,
+        'body': json.dumps({'error': message})
+    }
+
+# Function to send email
+def send_email(recipient, subject, body):
+    try:
+        msg = MIMEText(body)
+        msg['Subject'] = subject
+        msg['From'] = SMTP_USERNAME
+        msg['To'] = recipient
+
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.sendmail(SMTP_USERNAME, [recipient], msg.as_string())
+        logger.info(f"Email sent to {recipient}")
+    except smtplib.SMTPException as e:
+        logger.error(f"SMTP error occurred: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Error sending email: {e}")
+        raise
+
+# Lambda handler function
+def lambda_handler(event, context):
+    try:
+        # Process each record in the SNS event
+        for record in event['Records']:
+            try:
+                sns_message = record['Sns']['Message']
+                sns_subject = record['Sns']['Subject']
+                message_attributes = record['Sns'].get('MessageAttributes', {})
+                recipient_attr = message_attributes.get('Recipient', {})
+                recipient = recipient_attr.get('Value', '')
+
+                if not recipient:
+                    logger.warning("Recipient email is missing in SNS message.")
+                    continue
+
+                # Send email
+                send_email(recipient, sns_subject, sns_message)
+
+            except KeyError as e:
+                logger.error(f"Key error processing SNS record: {e}")
+                continue
+            except Exception as e:
+                logger.error(f"Error processing SNS record: {e}")
+                continue
+
+        return {'statusCode': 200, 'body': json.dumps({'message': 'Email(s) processed successfully'})}
+
+    except Exception as e:
+        logger.error(f"Unhandled exception: {e}")
+        return create_error_response(500, "Internal server error")

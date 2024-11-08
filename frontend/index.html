@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Iris AI Chatbot</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <h1>Iris AI Chatbot</h1>
+    <div id="chat-container">
+        <div id="messages"></div>
+        <input type="text" id="user-input" placeholder="Type your message here...">
+        <input type="email" id="user-email" placeholder="Your email (optional)">
+        <button id="send-button">Send</button>
+    </div>
+
+    <!-- Feedback Modal -->
+    <div id="feedback-modal" class="modal">
+        <div class="modal-content">
+            <span id="close-modal">&times;</span>
+            <h2>Rate your experience</h2>
+            <div id="rating-container">
+                <span class="star" data-value="1">&#9733;</span>
+                <span class="star" data-value="2">&#9733;</span>
+                <span class="star" data-value="3">&#9733;</span>
+                <span class="star" data-value="4">&#9733;</span>
+                <span class="star" data-value="5">&#9733;</span>
+            </div>
+            <textarea id="feedback-comment" placeholder="Additional comments (optional)"></textarea>
+            <button id="submit-feedback">Submit Feedback</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
